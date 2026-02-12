@@ -2039,8 +2039,21 @@
           return true;
         });
       } else {
-        rows = allRows;
+        rows = allRows.slice(); // shallow copy so sort doesn't mutate allRows
       }
+
+      // Apply the current sort order so export matches the displayed table
+      rows.sort(function(a, b) {
+        var valA = a[sortField] || '';
+        var valB = b[sortField] || '';
+        if (typeof valA === 'string' && typeof valB === 'string') {
+          var cmp = valA.localeCompare(valB, undefined, { sensitivity: 'base' });
+          return sortAsc ? cmp : -cmp;
+        }
+        if (valA < valB) return sortAsc ? -1 : 1;
+        if (valA > valB) return sortAsc ? 1 : -1;
+        return 0;
+      });
 
       if (rows.length === 0) {
         showToast('No assignments to export.', true);
