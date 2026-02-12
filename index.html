@@ -59,14 +59,20 @@
     }
 
     .login-logo {
-      font-size: 28px;
-      font-weight: 700;
-      letter-spacing: -0.5px;
-      background: linear-gradient(135deg, var(--vanta-blue), var(--vanta-teal));
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-      margin-bottom: 4px;
+      margin-bottom: 12px;
+    }
+
+    .login-logo img {
+      height: 100px;
+      width: auto;
+      object-fit: contain;
+      filter: brightness(0) invert(1) drop-shadow(0 2px 12px rgba(99, 102, 241, 0.3));
+      transition: transform 0.3s ease, filter 0.3s ease;
+    }
+
+    .login-logo img:hover {
+      transform: scale(1.03);
+      filter: brightness(0) invert(1) drop-shadow(0 4px 20px rgba(99, 102, 241, 0.5));
     }
 
     .login-subtitle {
@@ -149,16 +155,34 @@
     }
 
     .header-logo {
-      font-size: 20px;
-      font-weight: 700;
-      letter-spacing: -0.3px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .header-logo img {
+      height: 32px;
+      width: auto;
+      object-fit: contain;
+      filter: brightness(0) invert(1);
+      opacity: 0.95;
+      transition: opacity 0.3s ease;
+    }
+
+    .header-logo img:hover {
+      opacity: 1;
+    }
+
+    .header-logo .header-divider {
+      width: 1px;
+      height: 20px;
+      background: rgba(255, 255, 255, 0.25);
     }
 
     .header-logo span {
       font-weight: 400;
       font-size: 13px;
       opacity: 0.7;
-      margin-left: 8px;
     }
 
     .header-actions {
@@ -853,7 +877,7 @@
   <!-- ============================================================ -->
   <div class="login-overlay" id="loginOverlay">
     <div class="login-card">
-      <div class="login-logo">VANTA</div>
+      <div class="login-logo"><img src="img/vanta-lockup.png" alt="Vanta Diagnostics"></div>
       <div class="login-subtitle">CS Rep Assignment Editor</div>
 
       <!-- Step 1: Email + Password -->
@@ -907,7 +931,7 @@
   <!-- HEADER BAR -->
   <!-- ============================================================ -->
   <div class="header-bar" id="mainApp" style="display:none;">
-    <div class="header-logo">VANTA <span>CS Rep Assignment Editor</span></div>
+    <div class="header-logo"><img src="img/vanta-horizontal.png" alt="Vanta Diagnostics"> <div class="header-divider"></div> <span>CS Rep Assignment Editor</span></div>
     <div class="header-actions">
       <div id="realtimeIndicator" style="font-size:11px;color:rgba(255,255,255,0.4);display:flex;align-items:center;gap:6px;">
         <span style="width:6px;height:6px;border-radius:50%;background:var(--vanta-teal);display:inline-block;" id="rtDot"></span>
@@ -2000,12 +2024,23 @@
     // CSV EXPORT
     // =========================================================================
     function exportCsv() {
-      // Sync filters to ensure filteredRows reflects the latest input state
-      // (handles edge case where search debounce is still pending)
-      applyFilters();
+      // Compute the export set from current DOM input state and in-memory rows
+      // WITHOUT calling applyFilters() (which triggers renderTable and destroys
+      // any unsaved inline edits).
+      var search = ($('#searchInput').val() || '').toLowerCase().trim();
+      var csFilter = $('#csFilter').val() || '';
+      var hasActiveFilter = search !== '' || csFilter !== '';
 
-      var hasActiveFilter = ($('#searchInput').val() || '').trim() !== '' || ($('#csFilter').val() || '') !== '';
-      var rows = hasActiveFilter ? filteredRows : allRows;
+      var rows;
+      if (hasActiveFilter) {
+        rows = allRows.filter(function(r) {
+          if (csFilter && r.cs_email !== csFilter) return false;
+          if (search && r.rep_email.toLowerCase().indexOf(search) === -1) return false;
+          return true;
+        });
+      } else {
+        rows = allRows;
+      }
 
       if (rows.length === 0) {
         showToast('No assignments to export.', true);
