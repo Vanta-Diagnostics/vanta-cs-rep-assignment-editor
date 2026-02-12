@@ -1615,6 +1615,10 @@
         showToast('CS email cannot be empty.', true);
         return;
       }
+      if (!isValidEmail(newCsEmail)) {
+        showToast('Invalid email format for CS email.', true);
+        return;
+      }
 
       var row = allRows.find(function(r) { return r.id === id; });
       if (!row) return;
@@ -1996,7 +2000,10 @@
     // CSV EXPORT
     // =========================================================================
     function exportCsv() {
-      // Use filteredRows if a search/filter is active, otherwise export all
+      // Sync filters to ensure filteredRows reflects the latest input state
+      // (handles edge case where search debounce is still pending)
+      applyFilters();
+
       var hasActiveFilter = ($('#searchInput').val() || '').trim() !== '' || ($('#csFilter').val() || '') !== '';
       var rows = hasActiveFilter ? filteredRows : allRows;
 
