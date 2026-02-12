@@ -1413,17 +1413,34 @@
     // DATA
     // =========================================================================
     async function fetchAllData() {
-      const { data, error } = await sb
-        .from(TABLE)
-        .select('*')
-        .order('rep_email', { ascending: true });
+      // Paginate to avoid Supabase/PostgREST 1000-row default limit
+      var allData = [];
+      var pageSize = 1000;
+      var from = 0;
+      var hasMore = true;
 
-      if (error) {
-        showToast('Failed to load data: ' + (error.message || 'unknown error'), true);
-        return;
+      while (hasMore) {
+        const { data, error } = await sb
+          .from(TABLE)
+          .select('*')
+          .order('rep_email', { ascending: true })
+          .range(from, from + pageSize - 1);
+
+        if (error) {
+          showToast('Failed to load data: ' + (error.message || 'unknown error'), true);
+          return;
+        }
+
+        if (data && data.length > 0) {
+          allData = allData.concat(data);
+          from += data.length;
+          hasMore = data.length === pageSize;
+        } else {
+          hasMore = false;
+        }
       }
 
-      allRows = data || [];
+      allRows = allData;
       updateDistinctCsEmails();
       applyFilters();
       updateStats();
@@ -1435,13 +1452,23 @@
       allRows.forEach(function(r) { if (r.cs_email) set.add(r.cs_email); });
       distinctCsEmails = Array.from(set).sort();
 
+      // Preserve current filter selection before rebuilding dropdown
+      var currentFilter = $('#csFilter').val() || '';
+
       // Update filter dropdown
       var filterHtml = '<option value="">All CS Reps (' + distinctCsEmails.length + ')</option>';
       distinctCsEmails.forEach(function(email) {
         var count = allRows.filter(function(r) { return r.cs_email === email; }).length;
-        filterHtml += '<option value="' + escAttr(email) + '">' + escHtml(email) + ' (' + count + ')</option>';
+        filterHtml += '<option value="' + escAttr(email) + '"' +
+          (email === currentFilter ? ' selected' : '') +
+          '>' + escHtml(email) + ' (' + count + ')</option>';
       });
       $('#csFilter').html(filterHtml);
+
+      // Restore selection (if the value no longer exists, reset to "All")
+      if (currentFilter && distinctCsEmails.indexOf(currentFilter) === -1) {
+        $('#csFilter').val('');
+      }
 
       // Update datalist for add/edit
       var dlHtml = '';
@@ -1539,14 +1566,14 @@
           html += '</div>';
           html += '</td>';
         } else {
-          html += '<td><span class="cs-email-cell" onclick="startEdit(' + row.id + ')" title="Click to edit">' + escHtml(row.cs_email) + '</span></td>';
+          html += '<td><span class="cs-email-cell" data-action="edit" data-id="' + row.id + '" title="Click to edit">' + escHtml(row.cs_email) + '</span></td>';
         }
 
         html += '<td style="font-size:11px;color:rgba(255,255,255,0.3);">' + created + '</td>';
         html += '<td>';
         html += '<div class="row-actions">';
-        html += '<button class="btn-icon" onclick="startEdit(' + row.id + ')" title="Edit">&#9998;</button>';
-        html += '<button class="btn-icon delete" onclick="showDeleteConfirm(' + row.id + ', \'' + escAttr(row.rep_email) + '\')" title="Delete">&#10005;</button>';
+        html += '<button class="btn-icon" data-action="edit" data-id="' + row.id + '" title="Edit">&#9998;</button>';
+        html += '<button class="btn-icon delete" data-action="delete" data-id="' + row.id + '" data-email="' + escAttr(row.rep_email) + '" title="Delete">&#10005;</button>';
         html += '</div>';
         html += '</td>';
         html += '</tr>';
@@ -1633,6 +1660,8 @@
 
       if (!repEmail) { showToast('Rep email is required.', true); return; }
       if (!csEmail) { showToast('CS email is required.', true); return; }
+      if (!isValidEmail(repEmail)) { showToast('Invalid email format for rep email.', true); return; }
+      if (!isValidEmail(csEmail)) { showToast('Invalid email format for CS email.', true); return; }
 
       // Check if rep_email already exists
       var exists = allRows.find(function(r) { return r.rep_email.toLowerCase() === repEmail; });
@@ -1776,9 +1805,9 @@
         return;
       }
 
-      // Build a lookup map from current data
+      // Build a lookup map from current data (normalize null to empty string)
       var currentMap = {};
-      allRows.forEach(function(r) { currentMap[r.rep_email.toLowerCase()] = r.cs_email; });
+      allRows.forEach(function(r) { currentMap[r.rep_email.toLowerCase()] = (r.cs_email || '').toLowerCase(); });
 
       // Parse rows and classify
       importData = [];
@@ -1797,11 +1826,17 @@
           continue;
         }
 
+        if (!isValidEmail(repEmail) || !isValidEmail(csEmail)) {
+          importData.push({ rep_email: repEmail, cs_email: csEmail, status: 'error', error: 'Invalid email format' });
+          errors++;
+          continue;
+        }
+
         var existing = currentMap[repEmail];
 
         if (existing === undefined) {
           importData.push({ rep_email: repEmail, cs_email: csEmail, status: 'new' });
-        } else if (existing.toLowerCase() !== csEmail) {
+        } else if (existing !== csEmail) {
           importData.push({ rep_email: repEmail, cs_email: csEmail, old_cs_email: existing, status: 'update' });
         } else {
           importData.push({ rep_email: repEmail, cs_email: csEmail, status: 'skip' });
@@ -1921,13 +1956,22 @@
           return { rep_email: r.rep_email, cs_email: r.cs_email };
         });
 
-        var { error } = await sb
+        var { data: upsertData, error } = await sb
           .from(TABLE)
-          .upsert(batch, { onConflict: 'rep_email' });
+          .upsert(batch, { onConflict: 'rep_email' })
+          .select();
 
         if (error) {
-          errors += batch.length;
-          console.error('Import batch error:', error);
+          var succeeded = (upsertData && upsertData.length) || 0;
+          errors += batch.length - succeeded;
+          console.error('Import batch error:', error, {
+            message: error.message,
+            details: error.details,
+            hint: error.hint,
+            code: error.code,
+            batchSize: batch.length,
+            succeeded: succeeded
+          });
         }
 
         processed += batch.length;
@@ -1952,7 +1996,15 @@
     // CSV EXPORT
     // =========================================================================
     function exportCsv() {
-      var rows = filteredRows.length > 0 ? filteredRows : allRows;
+      // Use filteredRows if a search/filter is active, otherwise export all
+      var hasActiveFilter = ($('#searchInput').val() || '').trim() !== '' || ($('#csFilter').val() || '') !== '';
+      var rows = hasActiveFilter ? filteredRows : allRows;
+
+      if (rows.length === 0) {
+        showToast('No assignments to export.', true);
+        return;
+      }
+
       var csv = 'rep_email,cs_email\n';
       rows.forEach(function(r) {
         csv += '"' + (r.rep_email || '').replace(/"/g, '""') + '","' + (r.cs_email || '').replace(/"/g, '""') + '"\n';
@@ -1999,22 +2051,22 @@
     }
 
     function handleRealtimeEvent(payload) {
-      var eventType = payload.eventType;
+      const eventType = payload.eventType;
 
       if (eventType === 'INSERT') {
-        var record = payload.new;
+        const record = payload.new;
         // Only add if not already present (avoid duplication from own actions)
         if (!allRows.find(function(r) { return r.id === record.id; })) {
           allRows.push(record);
         }
       } else if (eventType === 'UPDATE') {
-        var record = payload.new;
-        var idx = allRows.findIndex(function(r) { return r.id === record.id; });
+        const record = payload.new;
+        const idx = allRows.findIndex(function(r) { return r.id === record.id; });
         if (idx >= 0) {
           allRows[idx] = record;
         }
       } else if (eventType === 'DELETE') {
-        var old = payload.old;
+        const old = payload.old;
         if (old && old.id) {
           allRows = allRows.filter(function(r) { return r.id !== old.id; });
         }
@@ -2046,6 +2098,18 @@
       if (e.target === this) $(this).removeClass('active');
     });
 
+    // Event delegation for table row actions (avoids inline onclick / XSS risk)
+    $(document).on('click', '[data-action="edit"]', function() {
+      var id = parseInt($(this).data('id'), 10);
+      if (id) startEdit(id);
+    });
+
+    $(document).on('click', '[data-action="delete"]', function() {
+      var id = parseInt($(this).data('id'), 10);
+      var email = $(this).data('email');
+      if (id && email) showDeleteConfirm(id, email);
+    });
+
     // Handle Enter key in add form
     $(document).on('keydown', '#addRepEmail, #addCsEmail', function(e) {
       if (e.key === 'Enter') { e.preventDefault(); saveNewAssignment(); }
@@ -2054,6 +2118,11 @@
     // =========================================================================
     // HELPERS
     // =========================================================================
+    // Email format validation — reused across add, edit, and import paths
+    function isValidEmail(email) {
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    }
+
     function escHtml(str) {
       return $('<div>').text(str || '').html();
     }
